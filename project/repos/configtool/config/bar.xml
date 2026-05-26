@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config FOO_VERSION="2">
+    <database>
+        <host>localhost</host>
+        <port>5432</port>
+        <name>myapp_db</name>
+    </database>
+    <server>
+        <address>0.0.0.0</address>
+        <port>8080</port>
+        <debug>false</debug>
+    </server>
+    <logging>
+        <level>INFO</level>
+        <file>logs/app.log</file>
+    </logging>
+</config>

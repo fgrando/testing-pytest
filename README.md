@@ -2,7 +2,6 @@
 example
 
     pip install pytest pytest-html
-    pytest                           # full run: writes report.html
-    pytest tests/test_file_exist.py  # just one check file
-    pytest -k licenses               # any test whose name matches
-    pytest --collect-only -q         # list every check (catalogue view)
+    python -m pytest project                    # full run: writes report.html
+    python -m pytest -k licenses .              # any test whose name matches
+    python -m pytest --collect-only -q project  # list every check (catalogue view)
