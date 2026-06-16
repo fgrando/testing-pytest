@@ -1,0 +1,10 @@
+# Dependency manifest — the auditable record of what went into a build.
+# Format:  name|url|revision|dest        (no spaces around the | )
+# - name : label shown in the build log
+# - url  : SVN URL to export from
+# - rev  : pinned revision number (required — this is what makes builds reproducible)
+# - dest : target path, resolved against X:\  (e.g. deps\fpga -> X:\deps\fpga)
+# Lines starting with # are ignored.
+
+fpga_image|https://svn.example.com/repos/fpga/tags/v2.3/bin|1542|deps\fpga
+bootloader|https://svn.example.com/repos/bl/trunk/out|1601|deps\bootloader

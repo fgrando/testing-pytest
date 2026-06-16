@@ -1,0 +1,36 @@
+stage('Mount workspace') {
+            steps { bat 'ci\\mount.bat "%WORKSPACE%"' }
+        }
+
+        stage('Fetch dependencies') {
+            steps { bat 'X:\\ci\\fetch_deps.bat' }
+        }
+
+        stage('Build') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    bat 'X:\\ci\\build.bat'
+                }
+            }
+        }
+
+        stage('Documentation') {
+            steps { bat 'X:\\ci\\make_docs.bat' }
+        }
+
+        stage('Package') {
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps { bat 'X:\\ci\\package.bat' }
+        }
+
+        stage('Archive') {
+            steps {
+                archiveArtifacts artifacts: 'logs/*.log, out/**/*.zip, out/**/*.pdf, docs/**/*.pdf',
+                                 fingerprint: true, onlyIfSuccessful: false
+            }
+        }
+    }
+
+    post {
+        always { bat 'subst X: /D & exit /b 0' }   // drop the mapping; never fail cleanup
+    }
