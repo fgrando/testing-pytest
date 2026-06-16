@@ -1,0 +1,20 @@
+# Dummy x509 template for the demo signer.
+#
+# A REAL TI K3 template adds the secure-boot OID extensions under the
+# 1.3.6.1.4.1.294.* arc (image-integrity SHA512 + size, boot core, load
+# address, etc.) that the ROM parses. Those are intentionally omitted here:
+# this cert only demonstrates the "prepend a signed cert to the binary"
+# mechanic, not a ROM-bootable image. Use your SDK's k3_x509template.txt
+# for anything that must actually boot on hardware.
+
+[ req ]
+distinguished_name = dn
+prompt             = no
+x509_extensions    = v3
+
+[ dn ]
+CN = dummy-root-of-trust
+O  = demo
+
+[ v3 ]
+basicConstraints = critical, CA:TRUE

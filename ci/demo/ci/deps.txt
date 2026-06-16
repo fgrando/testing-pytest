@@ -1,0 +1,8 @@
+# Dependency manifest — name|url|revision|dest  (no spaces around the | )
+#
+# All entries are commented out so the demo runs offline with no SVN access.
+# fetch_deps.bat will simply find nothing to export and exit 0.
+# Uncomment / replace with real pinned dependencies for your project:
+#
+# fpga_image|https://svn.example.com/repos/fpga/tags/v2.3/bin|1542|deps\fpga
+# bootloader|https://svn.example.com/repos/bl/trunk/out|1601|deps\bootloader
