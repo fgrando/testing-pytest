@@ -1,171 +1,61 @@
-// Declarative pipeline: manual parametrized run OR automatic SVN-commit trigger.
-// Maps a subst drive for the build and guarantees cleanup, detecting the
-// mapping first and never failing the pipeline on a subst error.
-
-// Helper: unmap a subst drive only if it is currently substituted.
-// Continue-on-failure via catchError so a stale/locked drive can't abort the build.
-def unmapIfMounted(String letter) {
-    // returnStatus: true -> exit code instead of throwing.
-    // 'subst' lists only substituted drives; findstr exits 0 if the letter is present.
-    def code = bat(returnStatus: true, script: "subst | findstr /i /b /c:\"${letter}:\"")
-    if (code == 0) {
-        echo "${letter}: is substituted -> unmapping"
-        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE',
-                   message: "subst ${letter}: /d failed") {
-            bat "subst ${letter}: /d"
-        }
-    } else {
-        echo "${letter}: not substituted, nothing to unmap."
-    }
-}
-
 pipeline {
-    agent any
+    agent none
 
-    // --- Parameters for "Build with Parameters" (manual runs) ---
     parameters {
-        string(
-            name: 'BUILD_TAG',
-            defaultValue: 'dev',
-            description: 'Short label for this build (single line).'
-        )
-        choice(
-            name: 'TARGET_ARCH',
-            choices: ['arm-none-eabi', 'powerpc-eabi', 'x86_64'],
-            description: 'Cross-compiler target architecture.'
-        )
-        booleanParam(
-            name: 'RUN_TESTS',
-            defaultValue: true,
-            description: 'Checkbox: run the test suite after building.'
-        )
-        booleanParam(
-            name: 'PACKAGE_DELIVERY',
-            defaultValue: false,
-            description: 'Checkbox: produce the ZIP+PDF delivery package.'
-        )
-        text(
-            name: 'RELEASE_NOTES',
-            defaultValue: '',
-            description: 'Multi-line textarea: notes embedded into the build artifacts.'
-        )
-        password(
-            name: 'SIGNING_TOKEN',
-            defaultValue: '',
-            description: 'Masked input (avoid for real secrets; prefer credentials()).'
-        )
-    }
-
-    // --- Automatic trigger: poll SVN every ~5 min; build only on new commits ---
-    triggers {
-        pollSCM('H/5 * * * *')
-    }
-
-    options {
-        timestamps()
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '30'))
-    }
-
-    environment {
-        DRIVE   = 'X'
-        WORKDIR = "build_${params.TARGET_ARCH}"
+        // Remove these two if you already define them elsewhere.
+        string(name: 'REPO_URL', defaultValue: '', description: 'SVN repo URL recorded on the board')
+        string(name: 'REVISION', defaultValue: '', description: 'SVN revision to build / record')
     }
 
     stages {
-        stage('Detect trigger source') {
-            steps {
-                script {
-                    def causes = currentBuild.getBuildCauses()
-                    def byScm  = causes.any { it._class?.contains('SCMTrigger') }
-                    def byUser = causes.any { it._class?.contains('UserIdCause') }
-                    env.TRIGGERED_BY = byScm ? 'SVN_COMMIT' : (byUser ? 'MANUAL' : 'OTHER')
-                    echo "Triggered by: ${env.TRIGGERED_BY}"
-
-                    if (env.TRIGGERED_BY == 'SVN_COMMIT') {
-                        env.EFFECTIVE_PACKAGE = 'true'
-                        env.EFFECTIVE_TESTS   = 'true'
-                    } else {
-                        env.EFFECTIVE_PACKAGE = params.PACKAGE_DELIVERY.toString()
-                        env.EFFECTIVE_TESTS   = params.RUN_TESTS.toString()
-                    }
-                }
-            }
-        }
-
-        stage('Checkout SVN') {
-            steps {
-                checkout([
-                    $class: 'SubversionSCM',
-                    locations: [[
-                        remote: 'https://svn.example.com/repo/trunk',
-                        credentialsId: 'svn-creds',
-                        local: '.',
-                        depthOption: 'infinity'
-                    ]],
-                    workspaceUpdater: [$class: 'UpdateUpdater']
-                ])
-            }
-        }
-
-        stage('Map drive') {
-            steps {
-                script {
-                    // Defensive: clear any leaked mapping from a prior aborted build,
-                    // then map fresh. Neither call can abort the pipeline.
-                    unmapIfMounted(env.DRIVE)
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE',
-                               message: "subst ${env.DRIVE}: map failed") {
-                        bat "subst ${env.DRIVE}: \"%WORKSPACE%\""
-                    }
-                }
-            }
-        }
-
         stage('Build') {
             steps {
-                echo "Building tag='${params.BUILD_TAG}' arch='${params.TARGET_ARCH}'"
-                bat "echo Building into %WORKDIR% for %TARGET_ARCH% on drive %DRIVE%:"
-                // sh / bat your real cross-compile here, e.g.:
-                // bat "make -C %DRIVE%:\\src ARCH=%TARGET_ARCH% TAG=%BUILD_TAG%"
-            }
-        }
-
-        stage('Test') {
-            when { expression { env.EFFECTIVE_TESTS == 'true' } }
-            steps {
-                echo 'Running tests...'
-                // bat "pytest --junitxml=results.xml"
-            }
-            post {
-                always {
-                    // junit allowEmptyResults: true, testResults: 'results.xml'
-                    echo 'Test stage finished.'
-                }
-            }
-        }
-
-        stage('Package delivery') {
-            when { expression { env.EFFECTIVE_PACKAGE == 'true' } }
-            steps {
                 script {
-                    writeFile file: 'RELEASE_NOTES.txt', text: params.RELEASE_NOTES
+                    runCmdOnCheckout('make clean && make',
+                        pre: 'gcc --version',
+                        timeout: 100,
+                        post: 'svn info || true',
+                        cleanup: { cleanWs() })
                 }
-                echo 'Producing ZIP+PDF delivery package...'
-                // bat "python package_delivery.py --tag %BUILD_TAG%"
             }
         }
     }
 
     post {
         always {
-            // Runs on SUCCESS, FAILURE and ABORTED (so long as the agent is alive).
-            // Unmap only if still mounted; never fail the build on cleanup.
-            script {
-                unmapIfMounted(env.DRIVE)
+            node('built-in') {                 // controller, so userContent is writable
+                lock('buildboard') {           // serialize across all pipelines; drop if no Lockable Resources plugin
+                    script {
+                        // ---- buildboard builder: append one record ----
+                        def uc   = currentBuild.getBuildCauses().find { it._class?.contains('UserIdCause') }
+                        def user = (uc?.userId ?: uc?.userName ?: 'automated').replace('|','/')
+                        def ts   = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+                        def repo = (params.REPO_URL ?: env.SVN_URL_1   ?: 'unknown').replace('|','/')
+                        def rev  = (params.REVISION ?: env.SVN_REVISION ?: 'unknown').toString()
+                        def res  = currentBuild.currentResult           // SUCCESS / FAILURE / UNSTABLE
+                        def line = [ts, repo, rev, user, res, env.JOB_NAME].join('|')
+
+                        def home  = env.JENKINS_HOME
+                        def board = "${home}\\userContent\\buildboard.csv"
+
+                        withEnv(["BOARD_LINE=${line}", "BOARD_FILE=${board}"]) {
+                            bat '''@echo off
+setlocal enabledelayedexpansion
+if not exist "%BOARD_FILE%" echo timestamp^|repo_url^|revision^|user^|result^|job>"%BOARD_FILE%"
+echo !BOARD_LINE!>>"%BOARD_FILE%"'''
+                        }
+
+                        // ---- board render: regenerate HTML, non-fatal ----
+                        def rc = bat(returnStatus: true, script:
+                            "python \"${home}\\userContent\\render_buildboard.py\" " +
+                            "-i \"${home}\\userContent\\buildboard.csv\" " +
+                            "-o \"${home}\\userContent\\buildboard.html\" -t \"Build Board\"")
+                        if (rc != 0) {
+                            echo "buildboard render failed (rc=${rc}); record was still appended"
+                        }
+                    }
+                }
             }
         }
-        success { echo "OK (${env.TRIGGERED_BY})" }
-        failure { echo "FAILED (${env.TRIGGERED_BY})" }
     }
 }
